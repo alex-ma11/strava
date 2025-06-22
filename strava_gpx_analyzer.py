@@ -3,9 +3,10 @@ import gpxpy
 import pandas as pd
 import numpy as np
 from io import StringIO
+from geopy.distance import geodesic
 
 st.set_page_config(page_title="Strava GPX Анализ", layout="centered")
-st.title("📊 Анализ пробежки из Strava GPX")
+st.title("📊 Анализ пробежки из Strava GPX по расстоянию")
 
 uploaded_file = st.file_uploader("Загрузите GPX-файл вашей тренировки", type="gpx")
 
@@ -37,24 +38,33 @@ if uploaded_file:
     df = pd.DataFrame(points)
     df.dropna(subset=['time'], inplace=True)
     df["time"] = pd.to_datetime(df["time"])
-    df["seconds"] = (df["time"] - df["time"].iloc[0]).dt.total_seconds()
 
-    st.success("✅ Файл загружен и обработан. Укажите интервалы сегментов:")
+    # Расчёт расстояния в метрах между точками
+    dists = [0.0]
+    for i in range(1, len(df)):
+        coord1 = (df.loc[i - 1, "lat"], df.loc[i - 1, "lon"])
+        coord2 = (df.loc[i, "lat"], df.loc[i, "lon"])
+        dist = geodesic(coord1, coord2).meters
+        dists.append(dist)
+    df["delta_dist"] = dists
+    df["distance"] = df["delta_dist"].cumsum()
 
-    total_time = int(df["seconds"].iloc[-1])
-    warmup_range = st.slider("Разминка (сек)", 0, total_time, (0, min(1200, total_time)))
-    interval_range = st.slider("Интервалы (сек)", 0, total_time, (warmup_range[1], min(warmup_range[1]+600, total_time)))
-    cooldown_range = st.slider("Заминка (сек)", 0, total_time, (interval_range[1], total_time))
+    st.success("✅ Файл загружен и обработан. Укажите интервалы сегментов по расстоянию:")
 
-    def summarize_segment(start, end):
-        seg = df[(df["seconds"] >= start) & (df["seconds"] < end)]
-        duration = end - start
+    total_distance = int(df["distance"].iloc[-1])
+    warmup_range = st.slider("Разминка (м)", 0, total_distance, (0, min(2000, total_distance)))
+    interval_range = st.slider("Интервалы (м)", 0, total_distance, (warmup_range[1], min(warmup_range[1] + 1000, total_distance)))
+    cooldown_range = st.slider("Заминка (м)", 0, total_distance, (interval_range[1], total_distance))
+
+    def summarize_segment(start_dist, end_dist):
+        seg = df[(df["distance"] >= start_dist) & (df["distance"] < end_dist)]
+        duration = (seg["time"].iloc[-1] - seg["time"].iloc[0]).total_seconds()
         return {
             "Длительность (мин)": round(duration / 60, 1),
             "Средний пульс": round(seg["hr"].mean(), 1) if not seg["hr"].isna().all() else None,
             "Макс. пульс": round(seg["hr"].max(), 1) if not seg["hr"].isna().all() else None,
             "Средний каденс": round(seg["cadence"].mean(), 1) if not seg["cadence"].notna().sum() > 0 else None,
-            "Длина сегмента (точек)": len(seg)
+            "Дистанция (м)": round(end_dist - start_dist, 1)
         }
 
     summary = {
